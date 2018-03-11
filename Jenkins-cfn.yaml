@@ -135,10 +135,7 @@ Resources:
           Statement:
           - Effect: Allow
             Action:
-            - 'cloudformation:DescribeStackEvents'
-            - 'cloudformation:CreateStack'
-            - 'cloudformation:DeleteStack'
-            - 'cloudformation:DescribeStacks'
+            - 'cloudformation:*'
             Resource:
             - '*'
       - PolicyName: ec2
@@ -337,4 +334,9 @@ Resources:
         - Key: Reference
           Value: Created from Cloudformation Stack
           PropagateAtLaunch: true
+Outputs:
+  JenkinUrl:
+    Value: !GetAtt AutoclusterELB.DNSName
+    Export:
+      Name: !Sub '${AWS::StackName}-URL'
 
