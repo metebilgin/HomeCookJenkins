@@ -1,0 +1,2 @@
+awseb-deployment-plugin
+pipeline-github
