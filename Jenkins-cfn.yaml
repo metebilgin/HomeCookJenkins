@@ -3,7 +3,7 @@ Description: JenkinsStack
 Mappings: 
   RegionMap: 
     us-east-1: 
-      "AMI": "ami-97785bed"
+      "AMI": "ami-6411e20d"
     us-east-2: 
       "AMI": "ami-f63b1193"
     us-west-1: 
@@ -22,7 +22,7 @@ Parameters:
   StartSize:
     Type: Number
     Default: '1'
-    Description: Number of instance
+    Description: Number of instances to launch in your Monitoring cluster
   InstanceType:
     Description: The EC2 instance type
     Type: String
@@ -41,7 +41,7 @@ Parameters:
   KeyName:
     Type: 'AWS::EC2::KeyPair::KeyName'
     Description: >-
-      Name of an existing EC2 KeyPair to enable SSH access 
+      Name of an existing EC2 KeyPair to enable SSH access to the Monitoring
       instances
     MinLength: 1
   JenkinsAdmin:
@@ -69,6 +69,21 @@ Parameters:
       server (e.g., 'sg-123456')
     Default: Primary
     Type: 'AWS::EC2::SecurityGroup::Id'
+  GitUrl:
+    Type: String
+    Description: >-
+        Existing Project with cloudformation.
+    MinLength: 1
+  CloudFormationFile:
+    Type: String
+    Description: >-
+        Existing Project with cloudformation.
+    MinLength: 1    
+  CloudFormationParams:
+    Type: String
+    Description: >-
+        Existing Project with cloudformation.
+    MinLength: 1    
 Resources:
   AutoclusterRole:
     Type: 'AWS::IAM::Role'
@@ -109,6 +124,64 @@ Resources:
               - '*'
       Roles:
         - !Ref AutoclusterRole
+  JenkinsUser:
+    Type: AWS::IAM::User
+    Properties:
+      Path: "/"
+      Policies:
+      - PolicyName: cloudformation
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'cloudformation:DescribeStackEvents'
+            - 'cloudformation:CreateStack'
+            - 'cloudformation:DeleteStack'
+            - 'cloudformation:DescribeStacks'
+            Resource:
+            - '*'
+      - PolicyName: ec2
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'ec2:*'
+            Resource:
+            - '*'
+      - PolicyName: iam
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'iam:*'
+            Resource:
+            - '*'
+      - PolicyName: elb
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'elasticloadbalancing:*'
+            Resource:
+            - '*'
+      - PolicyName: autoscaling
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'autoscaling:*'
+            Resource:
+            - '*'
+  AccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+        UserName:
+            !Ref JenkinsUser
   AutoclusterInstanceProfile:
     Type: 'AWS::IAM::InstanceProfile'
     Properties:
@@ -177,13 +250,73 @@ Resources:
             #cloud-config
             repo_update: true
             repo_upgrade: all
+            write_files:
+                - content: |
+                    <?xml version='1.0' encoding='UTF-8'?>
+                    <project>
+                      <actions/>
+                      <description></description>
+                      <keepDependencies>false</keepDependencies>
+                      <scm class="hudson.plugins.git.GitSCM" plugin="git@3.8.0">
+                        <configVersion>2</configVersion>
+                        <userRemoteConfigs>
+                          <hudson.plugins.git.UserRemoteConfig>
+                            <url>${GitUrl}</url>
+                          </hudson.plugins.git.UserRemoteConfig>
+                        </userRemoteConfigs>
+                        <branches>
+                          <hudson.plugins.git.BranchSpec>
+                            <name>*/master</name>
+                          </hudson.plugins.git.BranchSpec>
+                        </branches>
+                        <doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>
+                        <submoduleCfg class="list"/>
+                        <extensions/>
+                      </scm>
+                      <canRoam>true</canRoam>
+                      <disabled>false</disabled>
+                      <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
+                      <blockBuildWhenUpstreamBuilding>false</blockBuildWhenUpstreamBuilding>
+                      <triggers/>
+                      <concurrentBuild>false</concurrentBuild>
+                      <builders/>
+                      <publishers>
+                        <org.jenkinsci.plugins.github.status.GitHubCommitStatusSetter plugin="github@1.29.0">
+                          <commitShaSource class="org.jenkinsci.plugins.github.status.sources.BuildDataRevisionShaSource"/>
+                          <reposSource class="org.jenkinsci.plugins.github.status.sources.AnyDefinedRepositorySource"/>
+                          <contextSource class="org.jenkinsci.plugins.github.status.sources.DefaultCommitContextSource"/>
+                          <statusResultSource class="org.jenkinsci.plugins.github.status.sources.DefaultStatusResultSource"/>
+                          <statusBackrefSource class="org.jenkinsci.plugins.github.status.sources.BuildRefBackrefSource"/>
+                          <errorHandlers/>
+                        </org.jenkinsci.plugins.github.status.GitHubCommitStatusSetter>
+                      </publishers>
+                      <buildWrappers>
+                        <com.syncapse.jenkinsci.plugins.awscloudformationwrapper.CloudFormationBuildWrapper plugin="jenkins-cloudformation-plugin@1.2">
+                          <stacks>
+                            <com.syncapse.jenkinsci.plugins.awscloudformationwrapper.StackBean>
+                              <stackName>JenkinsStackTest</stackName>
+                              <description>JenkinsStackTest</description>
+                              <cloudFormationRecipe>${CloudFormationFile}</cloudFormationRecipe>
+                              <parameters>${CloudFormationParams}</parameters>
+                              <timeout>1800</timeout>
+                              <awsAccessKey>${AccessKey}</awsAccessKey>
+                              <awsSecretKey>${AccessKey.SecretAccessKey}</awsSecretKey>
+                              <autoDeleteStack>true</autoDeleteStack>
+                              <awsRegion>US_East_Northern_Virginia</awsRegion>
+                            </com.syncapse.jenkinsci.plugins.awscloudformationwrapper.StackBean>
+                          </stacks>
+                        </com.syncapse.jenkinsci.plugins.awscloudformationwrapper.CloudFormationBuildWrapper>
+                      </buildWrappers>
+                    </project>
+                  path: /opt/cloudformationBuild.xml
             runcmd:
               - [ sh, -c, "sudo yum install -y docker git"]
               - [ sh, -c, "sudo service docker start" ]
-              - [ sh, -c, "mkdir " ]
               - [ sh, -c, "git clone https://github.com/metebilgin/HomeCookJenkins /opt/HomeCookJenkins"]
               - [ sh, -c, "cd  /opt/HomeCookJenkins && docker build . -t jenkins_home_cook"]
               - [ sh, -c, "docker run -d -p 8080:8080 -e JENKINS_USERNAME=${JenkinsAdmin} -e JENKINS_PASSWORD=${JenkinsPassword} jenkins_home_cook"]
+              - [ sh, -c, "sleep 60"]
+              - [ sh, -c, "curl -X POST 'http:///${JenkinsAdmin}:${JenkinsPassword}@localhost:8080/createItem?name=CloudFormationCheck' --header \"Content-Type: application/xml\" -d @/opt/cloudformationBuild.xml"]
   AutoclusterAutoScalingGroup:
     Type: 'AWS::AutoScaling::AutoScalingGroup'
     Properties:
@@ -204,3 +337,4 @@ Resources:
         - Key: Reference
           Value: Created from Cloudformation Stack
           PropagateAtLaunch: true
+
