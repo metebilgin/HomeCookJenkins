@@ -1,0 +1,206 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: JenkinsStack
+Mappings: 
+  RegionMap: 
+    us-east-1: 
+      "AMI": "ami-6411e20d"
+    us-east-2: 
+      "AMI": "ami-f63b1193"
+    us-west-1: 
+      "AMI": "ami-c9c7978c"
+    eu-west-1: 
+      "AMI": "ami-37c2f643"
+    ap-southeast-1: 
+      "AMI": "ami-66f28c34"
+    ap-northeast-1: 
+      "AMI": "ami-9c03a89d"
+Parameters:
+  MaxSize:
+    Type: Number
+    Default: '1'
+    Description: The maximum size of the Auto Scaling group
+  StartSize:
+    Type: Number
+    Default: '1'
+    Description: Number of instance
+  InstanceType:
+    Description: The EC2 instance type
+    Type: String
+    Default: t2.medium
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - t2.large
+      - t2.xlarge
+      - t2.2xlarge
+      - m4.large
+      - m4.xlarge
+      - m4.2xlarge
+    ConstraintDescription: Must be a valid EC2 instance type.
+  KeyName:
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Description: >-
+      Name of an existing EC2 KeyPair to enable SSH access 
+      instances
+    MinLength: 1
+  JenkinsAdmin:
+    Type: String
+    Description: >-
+        Jenkins master User name
+    MinLength: 1
+  JenkinsPassword:
+    Type: String
+    Description: >-
+        Jenkins master User password
+    MinLength: 1
+  Subnets:
+    Description: List of VPC subnet IDs for the cluster
+    Type: 'List<AWS::EC2::Subnet::Id>'
+  SubnetAZ:
+    Description: Availability Zone of the Subnet
+    Type: 'List<AWS::EC2::AvailabilityZone::Name>'
+  VpcId:
+    Description: VPC associated with the provided subnets
+    Type: 'AWS::EC2::VPC::Id'
+  AdminSecurityGroup:
+    Description: >-
+      Existing security group that should be granted administrative access to
+      server (e.g., 'sg-123456')
+    Default: Primary
+    Type: 'AWS::EC2::SecurityGroup::Id'
+Resources:
+  AutoclusterRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+  AutoclusterPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: AutoclusterPolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'ecr:GetAuthorizationToken'
+              - 'ecr:BatchCheckLayerAvailability'
+              - 'ecr:GetDownloadUrlForLayer'
+              - 'ecr:GetRepositoryPolicy'
+              - 'ecr:DescribeRepositories'
+              - 'ecr:ListImages'
+              - 'ecr:BatchGetImage'
+            Resource:
+              - '*'
+          - Effect: Allow
+            Action:
+              - 'autoscaling:DescribeAutoScalingInstances'
+              - 'ec2:DescribeInstances'
+            Resource:
+              - '*'
+      Roles:
+        - !Ref AutoclusterRole
+  AutoclusterInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: /
+      Roles:
+        - !Ref AutoclusterRole
+  AutoclusterSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Open ports to the Jenkins
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '8080'
+          ToPort: '8080'
+          CidrIp: 0.0.0.0/0
+  LoadBalancerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Open ports to the Jenkins
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+  AutoclusterELB:
+    Type: 'AWS::ElasticLoadBalancing::LoadBalancer'
+    Properties:
+      SecurityGroups:
+        - !Ref AdminSecurityGroup
+        - !Ref LoadBalancerSecurityGroup
+      Subnets: !Ref Subnets
+      Scheme: internet-facing
+      Listeners:
+        - LoadBalancerPort: '80'
+          InstancePort: '8080'
+          Protocol: TCP
+      HealthCheck:
+        Target: 'HTTP:8080/'
+        HealthyThreshold: '2'
+        UnhealthyThreshold: '10'
+        Interval: '30'
+        Timeout: '5'
+      Tags:
+        - Key: Name
+          Value: !Ref 'AWS::StackName'
+  AutoclusterLaunchConfig:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Properties:
+      ImageId: !FindInMap [ RegionMap, !Ref "AWS::Region", "AMI" ]
+      InstanceMonitoring: true
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref AutoclusterInstanceProfile
+      KeyName: !Ref KeyName
+      SecurityGroups:
+        - !Ref AutoclusterSecurityGroup
+        - !Ref AdminSecurityGroup
+      UserData:
+        'Fn::Base64':
+          !Sub |
+            #cloud-config
+            repo_update: true
+            repo_upgrade: all
+            runcmd:
+              - [ sh, -c, "sudo yum install -y docker git"]
+              - [ sh, -c, "sudo service docker start" ]
+              - [ sh, -c, "mkdir " ]
+              - [ sh, -c, "git clone https://github.com/metebilgin/HomeCookJenkins /opt/HomeCookJenkins"]
+              - [ sh, -c, "cd  /opt/HomeCookJenkins && docker build . -t jenkins_home_cook"]
+              - [ sh, -c, "docker run -d -p 8080:8080 -e JENKINS_USERNAME=${JenkinsAdmin} -e JENKINS_PASSWORD=${JenkinsPassword} jenkins_home_cook"]
+  AutoclusterAutoScalingGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      VPCZoneIdentifier: !Ref Subnets
+      AvailabilityZones: !Ref SubnetAZ
+      DesiredCapacity: !Ref StartSize
+      MinSize: 0
+      MaxSize: !Ref MaxSize
+      HealthCheckGracePeriod: 300
+      HealthCheckType: ELB
+      LaunchConfigurationName: !Ref AutoclusterLaunchConfig
+      LoadBalancerNames:
+        - !Ref AutoclusterELB
+      Tags:
+        - Key: Name
+          Value: !Ref 'AWS::StackName'
+          PropagateAtLaunch: 'true'
+        - Key: Reference
+          Value: Created from Cloudformation Stack
+          PropagateAtLaunch: true
