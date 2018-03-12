@@ -72,17 +72,17 @@ Parameters:
   GitUrl:
     Type: String
     Description: >-
-        Existing Project with cloudformation.
+        Existing Project with cloudformation for testing.
     MinLength: 1
   CloudFormationFile:
     Type: String
     Description: >-
-        Existing Project with cloudformation.
+        Existing Project with cloudformation for testing.
     MinLength: 1    
   CloudFormationParams:
     Type: String
     Description: >-
-        Existing Project with cloudformation.
+        Existing Project with cloudformation for testing.
     MinLength: 1    
 Resources:
   AutoclusterRole:
